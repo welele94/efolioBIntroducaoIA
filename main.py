@@ -21,7 +21,7 @@ MAX_ACTIONS = 60
 MAX_GAMES = 10
 RESULTS_PATH = Path("resultados.csv")
 TIME_BUDGET_SECONDS = 19.0
-TERMINAL_TOKENS = {"Brancas", "Pretas", "Empate", "Inválido", "Invalido", "Erro"}
+TERMINAL_TOKENS = {"Brancas", "Pretas", "Empate", "Inválido", "Erro"}
 
 ACTIVE_PIECES = ("T", "B", "C", "D")
 WHITE_PIECES = {"P", "T", "B", "C", "D"}
@@ -565,7 +565,11 @@ def rebuild_state_from_tokens(tokens: list[str]) -> Optional[GameState]:
     return state
 
 
-def append_move_or_result(tokens: list[str], depth: int, deadline: float) -> list[str]:
+def controlled_player_for_line(line_index: int) -> str:
+    return "V" if line_index % 2 == 0 else "A"
+
+
+def append_move_or_result(tokens: list[str], line_index: int, depth: int, deadline: float) -> list[str]:
     if tokens and tokens[-1] in TERMINAL_TOKENS:
         return tokens
 
@@ -575,6 +579,9 @@ def append_move_or_result(tokens: list[str], depth: int, deadline: float) -> lis
 
     if state.is_terminal():
         return tokens + [terminal_token_for_state(state)]
+
+    if state.current_player != controlled_player_for_line(line_index):
+        return tokens
 
     remaining = deadline - perf_counter()
     if remaining <= 0:
@@ -593,10 +600,6 @@ def read_results_lines(path: Path) -> list[str]:
 
     lines = path.read_text(encoding="utf-8").splitlines()
 
-    # If an old debug-style CSV is present, start fresh with the expected game lines.
-    if any("," in line for line in lines):
-        return [""] * MAX_GAMES
-
     if len(lines) < MAX_GAMES:
         lines.extend([""] * (MAX_GAMES - len(lines)))
     return lines[:MAX_GAMES]
@@ -607,9 +610,9 @@ def run_results_csv(path: Path, depth: int) -> None:
     deadline = perf_counter() + TIME_BUDGET_SECONDS
     updated_lines = []
 
-    for line in lines:
+    for line_index, line in enumerate(lines):
         tokens = parse_result_tokens(line)
-        updated_tokens = append_move_or_result(tokens, depth, deadline)
+        updated_tokens = append_move_or_result(tokens, line_index, depth, deadline)
         updated_lines.append(" ".join(updated_tokens))
 
     path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")

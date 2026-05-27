@@ -22,7 +22,7 @@ Este projeto é uma **evolução do eFólio A**.
 python main.py
 ```
 
-Por defeito, o programa usa o protocolo do avaliador: cria/lê `resultados.csv`, reconstrói cada jogo pelas jogadas já escritas, acrescenta uma jogada válida ao jogador que estiver a jogar em cada jogo ativo, e grava o ficheiro sem imprimir nada.
+Por defeito, o programa usa o protocolo do avaliador: cria/lê `resultados.csv`, reconstrói cada jogo pelas jogadas já escritas, acrescenta uma jogada válida apenas quando for a vez do nosso agente nessa linha, e grava o ficheiro sem imprimir nada.
 
 O ficheiro `resultados.csv` fica com 10 linhas, uma por jogo. Cada linha é uma sequência simples de casas, por exemplo:
 
@@ -31,6 +31,11 @@ a3 b6 b4
 ```
 
 Isto significa que foram registadas três jogadas válidas sucessivas: `a3`, depois `b6`, depois `b4`.
+
+As 10 linhas alternam o lado do nosso agente:
+
+- linhas 1, 3, 5, 7 e 9: a referência joga primeiro; o nosso agente joga como Pretas/V.
+- linhas 2, 4, 6, 8 e 10: o nosso agente joga primeiro como Brancas/A.
 
 Para testes manuais, o programa também pode escolher apenas uma jogada e imprimir só a casa destino:
 
@@ -47,9 +52,9 @@ Para correr todas as instâncias e comparar resultados:
 python test_instances.py --depth 2
 ```
 
-## Modo avaliador
+## Modo Manual
 
-Além da instância inicial, o programa aceita um tabuleiro externo completo com exatamente 64 caracteres.
+O modo principal do avaliador é `resultados.csv`. Para testes manuais, o programa também aceita um tabuleiro externo completo com exatamente 64 caracteres.
 Nesse modo, o estado é construído diretamente a partir do tabuleiro recebido, são identificadas as posições de `A` e `V`, e a saída é apenas a casa de destino da jogada escolhida, por exemplo `d6`.
 
 ```bash
@@ -85,7 +90,7 @@ Também podes indicar outro ficheiro para testes:
 python main.py --csv --results /tmp/resultados.csv
 ```
 
-Se o ficheiro não existir, é criado. Se já existir, o programa lê as jogadas anteriores, incluindo as jogadas escritas pelo algoritmo do professor, reconstrói o estado atual e acrescenta a próxima jogada válida até todos os jogos terminarem.
+Se o ficheiro não existir, é criado. Se já existir, o programa lê as jogadas anteriores, incluindo as jogadas escritas pelo algoritmo do professor, reconstrói o estado atual e acrescenta no máximo uma jogada por linha ativa. Linhas terminadas com `Brancas`, `Pretas`, `Empate`, `Inválido` ou `Erro` não são alteradas.
 
 ## Simulação local
 
