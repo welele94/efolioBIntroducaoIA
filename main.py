@@ -36,8 +36,6 @@ PIECE_PRIORITY = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
 PIECE_VALUE = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
 PIECE_DISTANCE_MULTIPLIER = {"D": 2, "T": 4, "B": 4, "C": 7}
 PIECE_VALUE_WEIGHT = 2
-RECENT_OWN_LIMIT = 3
-REPEAT_ROOT_PENALTY = 500
 
 Coord = Tuple[int, int]
 
@@ -332,38 +330,11 @@ def order_moves(state: GameState, moves: list[Move]) -> list[Move]:
     return sorted(moves, key=lambda m: (move_priority(state, m), m.notation))
 
 
-def root_move_priority(state: GameState, move: Move, recent_own: set[str]) -> int:
-    base = move_priority(state, move)
-
-    if move.move_type == "capture":
-        return base
-
-    tr, tc = move.to_pos
-    cell = state.board[tr][tc]
-    if move.move_type == "king" and cell in ACTIVE_PIECES:
-        return base
-
-    if move.notation in recent_own:
-        return base + REPEAT_ROOT_PENALTY
-
-    return base
-
-
-def order_root_moves(state: GameState, moves: list[Move], recent_own: set[str]) -> list[Move]:
-    return sorted(moves, key=lambda m: (root_move_priority(state, m, recent_own), m.notation))
-
-
-def minimax_decision(
-    s: GameState,
-    depth: int,
-    time_limit: float,
-    recent_own: Optional[set[str]] = None,
-) -> Optional[Move]:
+def minimax_decision(s: GameState, depth: int, time_limit: float) -> Optional[Move]:
     start_time = perf_counter()
     deadline = start_time + (time_limit * 0.80)
 
-    recent_own = recent_own or set()
-    legal_moves = order_root_moves(s, generate_legal_moves(s), recent_own)
+    legal_moves = order_moves(s, generate_legal_moves(s))
     if not legal_moves:
         return None
 
@@ -445,16 +416,6 @@ def controlled_player_for_line(line_index: int) -> str:
     return "V" if line_index % 2 == 0 else "A"
 
 
-def own_recent_destinations(tokens: list[str], controlled_player: str, limit: int = RECENT_OWN_LIMIT) -> set[str]:
-    start_index = 0 if controlled_player == "A" else 1
-    own_moves = [
-        token
-        for index, token in enumerate(tokens)
-        if index % 2 == start_index and token not in TERMINAL_TOKENS
-    ]
-    return set(own_moves[-limit:])
-
-
 def update_tokens(tokens: list[str], line_index: int, depth: int, deadline: float) -> list[str]:
     if tokens and tokens[-1] in TERMINAL_TOKENS:
         return tokens
@@ -463,17 +424,12 @@ def update_tokens(tokens: list[str], line_index: int, depth: int, deadline: floa
         return tokens + ["Inválido"]
     if s.is_terminal():
         return tokens + [terminal_token(s)]
-
-    controlled = controlled_player_for_line(line_index)
-    if s.current_player != controlled:
+    if s.current_player != controlled_player_for_line(line_index):
         return tokens
-
     remaining = min(DEFAULT_TIME_LIMIT, deadline - perf_counter())
     if remaining <= 0:
         return tokens + ["Erro"]
-
-    recent_own = own_recent_destinations(tokens, controlled)
-    move = minimax_decision(s, depth, remaining, recent_own=recent_own)
+    move = minimax_decision(s, depth, remaining)
     return tokens + ([move.notation] if move else ["Erro"])
 
 
