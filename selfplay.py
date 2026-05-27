@@ -6,13 +6,13 @@ from pathlib import Path
 from main import (
     DEFAULT_TIME_LIMIT,
     MAX_DEPTH,
-    RECENT_OWN_LIMIT,
     create_initial_state,
     generate_legal_moves,
     minimax_decision,
 )
 
 OUTPUT_PATH = Path("resultados_selfplay.csv")
+RECENT_OWN_LIMIT = 3
 
 
 def board_with_agents(state):
@@ -117,7 +117,7 @@ def self_play(max_turns: int = 60, time_limit: float = 0.30, show_board: bool = 
         player = state.current_player
         recent_own = set(recent_by_player[player][-RECENT_OWN_LIMIT:])
         legal_moves = generate_legal_moves(state)
-        move = minimax_decision(state, depth=MAX_DEPTH, time_limit=time_limit, recent_own=recent_own)
+        move = minimax_decision(state, depth=MAX_DEPTH, time_limit=time_limit)
 
         if move is None:
             move = legal_moves[0]
