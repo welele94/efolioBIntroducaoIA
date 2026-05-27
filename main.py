@@ -257,6 +257,22 @@ def nearest_pawn_distance(s: GameState, pos: Coord) -> int:
     return min(distances) if distances else 0
 
 
+def nearest_piece_distance(s: GameState, pos: Coord) -> int:
+    distances = [
+        abs(pos[0] - r) + abs(pos[1] - c)
+        for r in range(8)
+        for c in range(8)
+        if s.board[r][c] in ACTIVE_PIECES
+    ]
+    return min(distances) if distances else 0
+
+
+def target_distance_score(s: GameState) -> int:
+    a_dist = nearest_pawn_distance(s, s.a_pos) if s.a_inside_piece else nearest_piece_distance(s, s.a_pos)
+    v_dist = nearest_pawn_distance(s, s.v_pos) if s.v_inside_piece else nearest_piece_distance(s, s.v_pos)
+    return v_dist - a_dist
+
+
 def mobility_counts(s: GameState) -> tuple[int, int]:
     original = s.current_player
     s.current_player = "A"
@@ -278,7 +294,7 @@ def evaluate(s: GameState) -> float:
 
     a_mob, v_mob = mobility_counts(s)
     score += (a_mob - v_mob) * MOBILITY_WEIGHT
-    score += (nearest_pawn_distance(s, s.v_pos) - nearest_pawn_distance(s, s.a_pos)) * DISTANCE_WEIGHT
+    score += target_distance_score(s) * DISTANCE_WEIGHT
 
     piece_score = PIECE_VALUE[s.a_active_piece] - PIECE_VALUE[s.v_active_piece]
     score += piece_score * PIECE_VALUE_WEIGHT
