@@ -10,7 +10,7 @@ BOARD_SIZE = 8
 BOARD_CELLS = 64
 INITIAL_BOARD_STRING = "Pp p pD ppBp p   pp pp  pCpVpp PP ppApCp  pp pp   p pBpp Dp p pP"
 
-MAX_DEPTH = 2
+MAX_DEPTH = 10
 DEFAULT_TIME_LIMIT = 0.95
 MAX_ACTIONS = 60
 MAX_GAMES = 10
@@ -312,19 +312,41 @@ def order_moves(state: GameState, moves: list[Move]) -> list[Move]:
 
 
 def minimax_decision(s: GameState, depth: int, time_limit: float) -> Optional[Move]:
-    deadline = perf_counter() + time_limit
+    start_time = perf_counter()
+    deadline = start_time + (time_limit * 0.80)
+
+    legal_moves = order_moves(s, generate_legal_moves(s))
+    if not legal_moves:
+        return None
+
+    best_move = legal_moves[0]
     maximizing = s.current_player == "A"
-    best_score = -inf if maximizing else inf
-    best_move = None
-    for move in order_moves(s, generate_legal_moves(s)):
+    current_depth = 1
+
+    while current_depth <= depth:
+        if perf_counter() >= deadline:
+            break
+
         try:
-            score = minimax(s.apply_move(move), depth - 1, -inf, inf, deadline)
+            current_best_score = -inf if maximizing else inf
+            current_best_move = None
+
+            for move in legal_moves:
+                score = minimax(s.apply_move(move), current_depth - 1, -inf, inf, deadline)
+                if maximizing and score > current_best_score:
+                    current_best_score = score
+                    current_best_move = move
+                elif not maximizing and score < current_best_score:
+                    current_best_score = score
+                    current_best_move = move
+
+            if current_best_move is not None:
+                best_move = current_best_move
+            current_depth += 1
+
         except SearchTimeout:
             break
-        if maximizing and score > best_score:
-            best_score, best_move = score, move
-        elif not maximizing and score < best_score:
-            best_score, best_move = score, move
+
     return best_move
 
 
