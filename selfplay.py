@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import csv
+from pathlib import Path
+
 from main import (
     DEFAULT_TIME_LIMIT,
     MAX_DEPTH,
@@ -7,6 +10,8 @@ from main import (
     generate_legal_moves,
     minimax_decision,
 )
+
+OUTPUT_PATH = Path("resultados_selfplay.csv")
 
 
 def board_with_agents(state):
@@ -16,6 +21,10 @@ def board_with_agents(state):
     board[ar][ac] = "A"
     board[vr][vc] = "V"
     return board
+
+
+def board_to_string(state) -> str:
+    return "/".join("".join(row) for row in board_with_agents(state))
 
 
 def print_board(state) -> None:
@@ -40,9 +49,58 @@ def print_state_summary(state) -> None:
     )
 
 
+def write_selfplay_csv(rows: list[dict[str, object]], final_sequence: str, final_state) -> None:
+    with OUTPUT_PATH.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter=";")
+
+        writer.writerow(["Resumo"])
+        writer.writerow(["Sequencia", final_sequence])
+        writer.writerow(["Total de acoes", final_state.action_count])
+        writer.writerow(["Capturas A", final_state.a_captures])
+        writer.writerow(["Capturas V", final_state.v_captures])
+        writer.writerow(["Vencedor", final_state.get_winner()])
+        writer.writerow([])
+
+        writer.writerow([
+            "acao",
+            "jogador",
+            "jogada",
+            "tipo",
+            "legais",
+            "capturas_A",
+            "capturas_V",
+            "A_pos",
+            "V_pos",
+            "A_dentro",
+            "V_dentro",
+            "A_peca",
+            "V_peca",
+            "tabuleiro",
+        ])
+
+        for row in rows:
+            writer.writerow([
+                row["acao"],
+                row["jogador"],
+                row["jogada"],
+                row["tipo"],
+                row["legais"],
+                row["capturas_A"],
+                row["capturas_V"],
+                row["A_pos"],
+                row["V_pos"],
+                row["A_dentro"],
+                row["V_dentro"],
+                row["A_peca"],
+                row["V_peca"],
+                row["tabuleiro"],
+            ])
+
+
 def self_play(max_turns: int = 60, time_limit: float = 0.30, show_board: bool = True) -> None:
     state = create_initial_state()
     moves: list[str] = []
+    rows: list[dict[str, object]] = []
 
     print("=== SELF-PLAY: nosso agente vs cópia do nosso agente ===")
     print(f"MAX_DEPTH={MAX_DEPTH} | time_limit por jogada={time_limit}s")
@@ -67,19 +125,41 @@ def self_play(max_turns: int = 60, time_limit: float = 0.30, show_board: bool = 
         )
 
         state = state.apply_move(move)
+
+        rows.append({
+            "acao": state.action_count,
+            "jogador": player,
+            "jogada": move.notation,
+            "tipo": move.move_type,
+            "legais": len(legal_moves),
+            "capturas_A": state.a_captures,
+            "capturas_V": state.v_captures,
+            "A_pos": state.a_pos,
+            "V_pos": state.v_pos,
+            "A_dentro": state.a_inside_piece,
+            "V_dentro": state.v_inside_piece,
+            "A_peca": state.a_active_piece or "",
+            "V_peca": state.v_active_piece or "",
+            "tabuleiro": board_to_string(state),
+        })
+
         print_state_summary(state)
 
         if show_board:
             print_board(state)
 
+    final_sequence = " ".join(moves)
+    write_selfplay_csv(rows, final_sequence, state)
+
     print()
     print("=== FIM ===")
     print("Sequência:")
-    print(" ".join(moves))
+    print(final_sequence)
     print(f"Total de ações: {state.action_count}")
     print(f"Capturas A: {state.a_captures}")
     print(f"Capturas V: {state.v_captures}")
     print(f"Vencedor: {state.get_winner()}")
+    print(f"CSV gravado em: {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":
