@@ -6,6 +6,7 @@ from pathlib import Path
 from main import (
     DEFAULT_TIME_LIMIT,
     MAX_DEPTH,
+    RECENT_OWN_LIMIT,
     create_initial_state,
     generate_legal_moves,
     minimax_decision,
@@ -67,6 +68,7 @@ def write_selfplay_csv(rows: list[dict[str, object]], final_sequence: str, final
             "jogada",
             "tipo",
             "legais",
+            "recentes_proprias",
             "capturas_A",
             "capturas_V",
             "A_pos",
@@ -85,6 +87,7 @@ def write_selfplay_csv(rows: list[dict[str, object]], final_sequence: str, final
                 row["jogada"],
                 row["tipo"],
                 row["legais"],
+                row["recentes_proprias"],
                 row["capturas_A"],
                 row["capturas_V"],
                 row["A_pos"],
@@ -101,17 +104,20 @@ def self_play(max_turns: int = 60, time_limit: float = 0.30, show_board: bool = 
     state = create_initial_state()
     moves: list[str] = []
     rows: list[dict[str, object]] = []
+    recent_by_player: dict[str, list[str]] = {"A": [], "V": []}
 
     print("=== SELF-PLAY: nosso agente vs cópia do nosso agente ===")
     print(f"MAX_DEPTH={MAX_DEPTH} | time_limit por jogada={time_limit}s")
+    print(f"Anti-loop raiz: últimas {RECENT_OWN_LIMIT} casas próprias")
     print_state_summary(state)
     if show_board:
         print_board(state)
 
     while not state.is_terminal() and state.action_count < max_turns:
         player = state.current_player
+        recent_own = set(recent_by_player[player][-RECENT_OWN_LIMIT:])
         legal_moves = generate_legal_moves(state)
-        move = minimax_decision(state, depth=MAX_DEPTH, time_limit=time_limit)
+        move = minimax_decision(state, depth=MAX_DEPTH, time_limit=time_limit, recent_own=recent_own)
 
         if move is None:
             move = legal_moves[0]
@@ -121,10 +127,11 @@ def self_play(max_turns: int = 60, time_limit: float = 0.30, show_board: bool = 
         print()
         print(
             f"{state.action_count + 1:02d}. {player} joga {move.notation} "
-            f"({move.move_type}) | legais={len(legal_moves)}"
+            f"({move.move_type}) | legais={len(legal_moves)} | recentes={sorted(recent_own)}"
         )
 
         state = state.apply_move(move)
+        recent_by_player[player].append(move.notation)
 
         rows.append({
             "acao": state.action_count,
@@ -132,6 +139,7 @@ def self_play(max_turns: int = 60, time_limit: float = 0.30, show_board: bool = 
             "jogada": move.notation,
             "tipo": move.move_type,
             "legais": len(legal_moves),
+            "recentes_proprias": " ".join(sorted(recent_own)),
             "capturas_A": state.a_captures,
             "capturas_V": state.v_captures,
             "A_pos": state.a_pos,
