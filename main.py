@@ -34,6 +34,7 @@ DISTANCE_WEIGHT = 2
 BLOCKED_WEIGHT = 150
 PIECE_PRIORITY = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
 PIECE_VALUE = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
+PIECE_DISTANCE_MULTIPLIER = {"D": 2, "T": 4, "B": 4, "C": 7}
 PIECE_VALUE_WEIGHT = 2
 
 Coord = Tuple[int, int]
@@ -257,20 +258,22 @@ def nearest_pawn_distance(s: GameState, pos: Coord) -> int:
     return min(distances) if distances else 0
 
 
-def nearest_piece_distance(s: GameState, pos: Coord) -> int:
-    distances = [
-        abs(pos[0] - r) + abs(pos[1] - c)
-        for r in range(8)
-        for c in range(8)
-        if s.board[r][c] in ACTIVE_PIECES
-    ]
-    return min(distances) if distances else 0
+def piece_target_score(s: GameState, pos: Coord) -> int:
+    best_penalty = -10_000
+    for r in range(8):
+        for c in range(8):
+            piece = s.board[r][c]
+            if piece in ACTIVE_PIECES:
+                distance = abs(pos[0] - r) + abs(pos[1] - c)
+                penalty = -(distance * PIECE_DISTANCE_MULTIPLIER[piece])
+                best_penalty = max(best_penalty, penalty)
+    return best_penalty if best_penalty != -10_000 else 0
 
 
 def target_distance_score(s: GameState) -> int:
-    a_dist = nearest_pawn_distance(s, s.a_pos) if s.a_inside_piece else nearest_piece_distance(s, s.a_pos)
-    v_dist = nearest_pawn_distance(s, s.v_pos) if s.v_inside_piece else nearest_piece_distance(s, s.v_pos)
-    return v_dist - a_dist
+    a_score = -nearest_pawn_distance(s, s.a_pos) if s.a_inside_piece else piece_target_score(s, s.a_pos)
+    v_score = -nearest_pawn_distance(s, s.v_pos) if s.v_inside_piece else piece_target_score(s, s.v_pos)
+    return a_score - v_score
 
 
 def mobility_counts(s: GameState) -> tuple[int, int]:
