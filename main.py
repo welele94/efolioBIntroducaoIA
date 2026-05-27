@@ -31,6 +31,11 @@ WIN_BONUS = 10000
 CAPTURE_WEIGHT = 120
 MOBILITY_WEIGHT = 4
 DISTANCE_WEIGHT = 2
+BLOCKED_WEIGHT = 150
+PIECE_PRIORITY = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
+PIECE_VALUE = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
+PIECE_VALUE_WEIGHT = 2
+
 Coord = Tuple[int, int]
 
 
@@ -252,6 +257,16 @@ def nearest_pawn_distance(s: GameState, pos: Coord) -> int:
     return min(distances) if distances else 0
 
 
+def mobility_counts(s: GameState) -> tuple[int, int]:
+    original = s.current_player
+    s.current_player = "A"
+    a_mob = len(generate_legal_moves(s))
+    s.current_player = "V"
+    v_mob = len(generate_legal_moves(s))
+    s.current_player = original
+    return a_mob, v_mob
+
+
 def evaluate(s: GameState) -> float:
     if s.is_terminal():
         winner = s.get_winner()
@@ -260,19 +275,40 @@ def evaluate(s: GameState) -> float:
         return WIN_BONUS if winner == "A" else -WIN_BONUS
 
     score = (s.a_captures - s.v_captures) * CAPTURE_WEIGHT
-    original = s.current_player
-    s.current_player = "A"
-    a_mob = len(generate_legal_moves(s))
-    s.current_player = "V"
-    v_mob = len(generate_legal_moves(s))
-    s.current_player = original
+
+    a_mob, v_mob = mobility_counts(s)
     score += (a_mob - v_mob) * MOBILITY_WEIGHT
     score += (nearest_pawn_distance(s, s.v_pos) - nearest_pawn_distance(s, s.a_pos)) * DISTANCE_WEIGHT
+
+    piece_score = PIECE_VALUE[s.a_active_piece] - PIECE_VALUE[s.v_active_piece]
+    score += piece_score * PIECE_VALUE_WEIGHT
+
+    if a_mob <= 1:
+        score -= BLOCKED_WEIGHT
+    if v_mob <= 1:
+        score += BLOCKED_WEIGHT
+
     return score
 
 
-def order_moves(moves: list[Move]) -> list[Move]:
-    return sorted(moves, key=lambda m: (m.move_type != "capture", m.move_type == "pass", m.notation))
+def move_priority(state: GameState, move: Move) -> int:
+    if move.move_type == "capture":
+        return 0
+
+    tr, tc = move.to_pos
+    cell = state.board[tr][tc]
+
+    if move.move_type == "king" and cell in ACTIVE_PIECES:
+        return 100 - PIECE_PRIORITY[cell]
+    if move.move_type == "king":
+        return 200
+    if move.move_type == "exit":
+        return 300
+    return 400
+
+
+def order_moves(state: GameState, moves: list[Move]) -> list[Move]:
+    return sorted(moves, key=lambda m: (move_priority(state, m), m.notation))
 
 
 def minimax_decision(s: GameState, depth: int, time_limit: float) -> Optional[Move]:
@@ -280,7 +316,7 @@ def minimax_decision(s: GameState, depth: int, time_limit: float) -> Optional[Mo
     maximizing = s.current_player == "A"
     best_score = -inf if maximizing else inf
     best_move = None
-    for move in order_moves(generate_legal_moves(s)):
+    for move in order_moves(s, generate_legal_moves(s)):
         try:
             score = minimax(s.apply_move(move), depth - 1, -inf, inf, deadline)
         except SearchTimeout:
@@ -299,14 +335,14 @@ def minimax(s: GameState, depth: int, alpha: float, beta: float, deadline: float
         return evaluate(s)
     if s.current_player == "A":
         value = -inf
-        for move in order_moves(generate_legal_moves(s)):
+        for move in order_moves(s, generate_legal_moves(s)):
             value = max(value, minimax(s.apply_move(move), depth - 1, alpha, beta, deadline))
             alpha = max(alpha, value)
             if alpha >= beta:
                 break
         return value
     value = inf
-    for move in order_moves(generate_legal_moves(s)):
+    for move in order_moves(s, generate_legal_moves(s)):
         value = min(value, minimax(s.apply_move(move), depth - 1, alpha, beta, deadline))
         beta = min(beta, value)
         if alpha >= beta:
