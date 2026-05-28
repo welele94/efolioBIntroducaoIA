@@ -119,15 +119,31 @@ class GameState:
 
         elif move.move_type == "exit":
             fr, fc = pos
+            destination_cell = s.board[tr][tc]
+
+            # Ao sair de uma peça, o agente pode mover-se para uma casa vazia
+            # ou entrar imediatamente noutra peça ativa adjacente.
             s.board[fr][fc] = "P"
-            if player == "A":
-                s.a_pos = move.to_pos
-                s.a_inside_piece = False
-                s.a_active_piece = None
+
+            if destination_cell in ACTIVE_PIECES:
+                s.board[tr][tc] = " "
+                if player == "A":
+                    s.a_pos = move.to_pos
+                    s.a_inside_piece = True
+                    s.a_active_piece = destination_cell
+                else:
+                    s.v_pos = move.to_pos
+                    s.v_inside_piece = True
+                    s.v_active_piece = destination_cell
             else:
-                s.v_pos = move.to_pos
-                s.v_inside_piece = False
-                s.v_active_piece = None
+                if player == "A":
+                    s.a_pos = move.to_pos
+                    s.a_inside_piece = False
+                    s.a_active_piece = None
+                else:
+                    s.v_pos = move.to_pos
+                    s.v_inside_piece = False
+                    s.v_active_piece = None
 
         s.action_count += 1
         s.current_player = other_player(player)
@@ -231,7 +247,12 @@ def exit_moves(s: GameState, pos: Coord, opp: Coord) -> list[Move]:
     moves = []
     for dr, dc in KING_DELTAS:
         nr, nc = pos[0] + dr, pos[1] + dc
-        if in_bounds(nr, nc) and not adjacent_or_same((nr, nc), opp) and s.board[nr][nc] == " ":
+        if not in_bounds(nr, nc) or adjacent_or_same((nr, nc), opp):
+            continue
+
+        # Movimento de rei ao sair da peça: casa vazia ou troca direta
+        # para outra peça ativa adjacente.
+        if s.board[nr][nc] == " " or s.board[nr][nc] in ACTIVE_PIECES:
             moves.append(Move(pos, (nr, nc), "exit", coord_to_notation((nr, nc))))
     return moves
 
