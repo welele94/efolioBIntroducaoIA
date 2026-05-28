@@ -36,6 +36,13 @@ PIECE_PRIORITY = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
 PIECE_VALUE = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
 PIECE_VALUE_WEIGHT = 2
 
+OPENING_BOOK = {
+    (): "e6",
+    ("e6",): "d3",
+    ("e6", "d3"): "f7",
+    ("e6", "d3", "f7"): "c2",
+}
+
 Coord = Tuple[int, int]
 
 
@@ -413,6 +420,18 @@ def controlled_player_for_line(line_index: int) -> str:
     return "V" if line_index % 2 == 0 else "A"
 
 
+def opening_book_move(s: GameState, tokens: list[str]) -> Optional[Move]:
+    notation = OPENING_BOOK.get(tuple(tokens))
+    if notation is None:
+        return None
+
+    for move in generate_legal_moves(s):
+        if move.notation == notation:
+            return move
+
+    return None
+
+
 def update_tokens(tokens: list[str], line_index: int, depth: int, deadline: float) -> list[str]:
     if tokens and tokens[-1] in TERMINAL_TOKENS:
         return tokens
@@ -423,6 +442,11 @@ def update_tokens(tokens: list[str], line_index: int, depth: int, deadline: floa
         return tokens + [terminal_token(s)]
     if s.current_player != controlled_player_for_line(line_index):
         return tokens
+
+    book_move = opening_book_move(s, tokens)
+    if book_move is not None:
+        return tokens + [book_move.notation]
+
     remaining = min(DEFAULT_TIME_LIMIT, deadline - perf_counter())
     if remaining <= 0:
         return tokens + ["Erro"]
