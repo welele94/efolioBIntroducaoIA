@@ -32,16 +32,13 @@ CAPTURE_WEIGHT = 120
 MOBILITY_WEIGHT = 4
 DISTANCE_WEIGHT = 2
 BLOCKED_WEIGHT = 150
+MAJORITY_PRESSURE_WEIGHT = 90
 PIECE_PRIORITY = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
 PIECE_VALUE = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
 PIECE_VALUE_WEIGHT = 2
+MAX_TRANSPOSITION_ENTRIES = 200_000
 
-OPENING_BOOK = {
-    (): "e6",
-    ("e6",): "d3",
-    ("e6", "d3"): "f7",
-    ("e6", "d3", "f7"): "c2",
-}
+OPENING_BOOK = {(): "e6", ("e6",): "d3", ("e6", "d3"): "f7", ("e6", "d3", "f7"): "c2"}
 
 Coord = Tuple[int, int]
 
@@ -71,9 +68,18 @@ class GameState:
 
     def clone(self) -> "GameState":
         return GameState(
-            [row[:] for row in self.board], self.current_player, self.a_pos, self.v_pos,
-            self.a_inside_piece, self.v_inside_piece, self.a_active_piece, self.v_active_piece,
-            self.a_captures, self.v_captures, self.action_count, self.initial_black_pawns,
+            [row[:] for row in self.board],
+            self.current_player,
+            self.a_pos,
+            self.v_pos,
+            self.a_inside_piece,
+            self.v_inside_piece,
+            self.a_active_piece,
+            self.v_active_piece,
+            self.a_captures,
+            self.v_captures,
+            self.action_count,
+            self.initial_black_pawns,
         )
 
     def apply_move(self, move: Move) -> "GameState":
@@ -178,7 +184,7 @@ def other_player(player: str) -> str:
 
 
 def in_bounds(r: int, c: int) -> bool:
-    return 0 <= r < 8 and 0 <= c < 8
+    return 0 <= r < BOARD_SIZE and 0 <= c < BOARD_SIZE
 
 
 def coord_to_notation(pos: Coord) -> str:
@@ -225,9 +231,7 @@ def exit_moves(s: GameState, pos: Coord, opp: Coord) -> list[Move]:
     moves = []
     for dr, dc in KING_DELTAS:
         nr, nc = pos[0] + dr, pos[1] + dc
-        if not in_bounds(nr, nc) or adjacent_or_same((nr, nc), opp):
-            continue
-        if s.board[nr][nc] == " ":
+        if in_bounds(nr, nc) and not adjacent_or_same((nr, nc), opp) and s.board[nr][nc] == " ":
             moves.append(Move(pos, (nr, nc), "exit", coord_to_notation((nr, nc))))
     return moves
 
@@ -290,6 +294,18 @@ def mobility_counts(s: GameState) -> tuple[int, int]:
     return a_mob, v_mob
 
 
+def majority_pressure_score(s: GameState) -> int:
+    majority = s.initial_black_pawns // 2 + 1
+    a_remaining = majority - s.a_captures
+    v_remaining = majority - s.v_captures
+    score = 0
+    if 0 < a_remaining <= 3:
+        score += (4 - a_remaining) * MAJORITY_PRESSURE_WEIGHT
+    if 0 < v_remaining <= 3:
+        score -= (4 - v_remaining) * MAJORITY_PRESSURE_WEIGHT
+    return score
+
+
 def evaluate(s: GameState) -> float:
     if s.is_terminal():
         winner = s.get_winner()
@@ -298,29 +314,23 @@ def evaluate(s: GameState) -> float:
         return WIN_BONUS if winner == "A" else -WIN_BONUS
 
     score = (s.a_captures - s.v_captures) * CAPTURE_WEIGHT
-
     a_mob, v_mob = mobility_counts(s)
     score += (a_mob - v_mob) * MOBILITY_WEIGHT
     score += target_distance_score(s) * DISTANCE_WEIGHT
-
-    piece_score = PIECE_VALUE[s.a_active_piece] - PIECE_VALUE[s.v_active_piece]
-    score += piece_score * PIECE_VALUE_WEIGHT
-
+    score += majority_pressure_score(s)
+    score += (PIECE_VALUE[s.a_active_piece] - PIECE_VALUE[s.v_active_piece]) * PIECE_VALUE_WEIGHT
     if a_mob <= 1:
         score -= BLOCKED_WEIGHT
     if v_mob <= 1:
         score += BLOCKED_WEIGHT
-
     return score
 
 
 def move_priority(state: GameState, move: Move) -> int:
     if move.move_type == "capture":
         return 0
-
     tr, tc = move.to_pos
     cell = state.board[tr][tc]
-
     if move.move_type == "king" and cell in ACTIVE_PIECES:
         return 100 - PIECE_PRIORITY[cell]
     if move.move_type == "king":
@@ -334,64 +344,86 @@ def order_moves(state: GameState, moves: list[Move]) -> list[Move]:
     return sorted(moves, key=lambda m: (move_priority(state, m), m.notation))
 
 
-def minimax_decision(s: GameState, depth: int, time_limit: float) -> Optional[Move]:
-    start_time = perf_counter()
-    deadline = start_time + (time_limit * 0.80)
+def state_key(s: GameState):
+    return (
+        tuple(tuple(row) for row in s.board),
+        s.current_player,
+        s.a_pos,
+        s.v_pos,
+        s.a_inside_piece,
+        s.v_inside_piece,
+        s.a_active_piece,
+        s.v_active_piece,
+        s.a_captures,
+        s.v_captures,
+        s.action_count,
+    )
 
+
+def minimax_decision(s: GameState, depth: int, time_limit: float) -> Optional[Move]:
+    deadline = perf_counter() + (time_limit * 0.80)
     legal_moves = order_moves(s, generate_legal_moves(s))
     if not legal_moves:
         return None
 
-    best_move = legal_moves[0]
+    best_completed_move = legal_moves[0]
     maximizing = s.current_player == "A"
-    current_depth = 1
+    table: dict[tuple, tuple[int, float]] = {}
 
-    while current_depth <= depth:
+    for current_depth in range(1, depth + 1):
         if perf_counter() >= deadline:
             break
-
         try:
-            current_best_score = -inf if maximizing else inf
-            current_best_move = None
-
+            best_score = -inf if maximizing else inf
+            best_move = None
             for move in legal_moves:
-                score = minimax(s.apply_move(move), current_depth - 1, -inf, inf, deadline)
-                if maximizing and score > current_best_score:
-                    current_best_score = score
-                    current_best_move = move
-                elif not maximizing and score < current_best_score:
-                    current_best_score = score
-                    current_best_move = move
-
-            if current_best_move is not None:
-                best_move = current_best_move
-            current_depth += 1
-
+                score = minimax(s.apply_move(move), current_depth - 1, -inf, inf, deadline, table)
+                if maximizing and score > best_score:
+                    best_score, best_move = score, move
+                elif not maximizing and score < best_score:
+                    best_score, best_move = score, move
+            if best_move is not None:
+                best_completed_move = best_move
         except SearchTimeout:
             break
+    return best_completed_move
 
-    return best_move
 
-
-def minimax(s: GameState, depth: int, alpha: float, beta: float, deadline: float) -> float:
+def minimax(s: GameState, depth: int, alpha: float, beta: float, deadline: float, table: dict[tuple, tuple[int, float]]) -> float:
     if perf_counter() >= deadline:
         raise SearchTimeout
+
+    key = state_key(s)
+    cached = table.get(key)
+    if cached is not None and cached[0] >= depth:
+        return cached[1]
+
     if depth == 0 or s.is_terminal():
-        return evaluate(s)
+        score = evaluate(s)
+        if len(table) < MAX_TRANSPOSITION_ENTRIES:
+            table[key] = (depth, score)
+        return score
+
+    explored_all = True
     if s.current_player == "A":
         value = -inf
         for move in order_moves(s, generate_legal_moves(s)):
-            value = max(value, minimax(s.apply_move(move), depth - 1, alpha, beta, deadline))
+            value = max(value, minimax(s.apply_move(move), depth - 1, alpha, beta, deadline, table))
             alpha = max(alpha, value)
             if alpha >= beta:
+                explored_all = False
                 break
-        return value
-    value = inf
-    for move in order_moves(s, generate_legal_moves(s)):
-        value = min(value, minimax(s.apply_move(move), depth - 1, alpha, beta, deadline))
-        beta = min(beta, value)
-        if alpha >= beta:
-            break
+    else:
+        value = inf
+        for move in order_moves(s, generate_legal_moves(s)):
+            value = min(value, minimax(s.apply_move(move), depth - 1, alpha, beta, deadline, table))
+            beta = min(beta, value)
+            if alpha >= beta:
+                explored_all = False
+                break
+
+    if explored_all and len(table) < MAX_TRANSPOSITION_ENTRIES:
+        table[key] = (depth, value)
     return value
 
 
@@ -424,17 +456,26 @@ def opening_book_move(s: GameState, tokens: list[str]) -> Optional[Move]:
     notation = OPENING_BOOK.get(tuple(tokens))
     if notation is None:
         return None
+    return next((m for m in generate_legal_moves(s) if m.notation == notation), None)
 
-    for move in generate_legal_moves(s):
-        if move.notation == notation:
-            return move
 
-    return None
+def append_move_and_result(tokens: list[str], s: GameState, move: Move) -> list[str]:
+    new_tokens = tokens + [move.notation]
+    next_state = s.apply_move(move)
+    if next_state.is_terminal():
+        new_tokens.append(terminal_token(next_state))
+    return new_tokens
+
+
+def safe_fallback_move(s: GameState) -> Optional[Move]:
+    legal = order_moves(s, generate_legal_moves(s))
+    return legal[0] if legal else None
 
 
 def update_tokens(tokens: list[str], line_index: int, depth: int, deadline: float) -> list[str]:
     if tokens and tokens[-1] in TERMINAL_TOKENS:
         return tokens
+
     s = rebuild_state(tokens)
     if s is None:
         return tokens + ["Inválido"]
@@ -445,13 +486,15 @@ def update_tokens(tokens: list[str], line_index: int, depth: int, deadline: floa
 
     book_move = opening_book_move(s, tokens)
     if book_move is not None:
-        return tokens + [book_move.notation]
+        return append_move_and_result(tokens, s, book_move)
 
     remaining = min(DEFAULT_TIME_LIMIT, deadline - perf_counter())
     if remaining <= 0:
-        return tokens + ["Erro"]
-    move = minimax_decision(s, depth, remaining)
-    return tokens + ([move.notation] if move else ["Erro"])
+        move = safe_fallback_move(s)
+        return append_move_and_result(tokens, s, move) if move else tokens + ["Erro"]
+
+    move = minimax_decision(s, depth, remaining) or safe_fallback_move(s)
+    return append_move_and_result(tokens, s, move) if move else tokens + ["Erro"]
 
 
 def read_results(path: Path) -> list[str]:
@@ -461,12 +504,17 @@ def read_results(path: Path) -> list[str]:
     return (lines + [""] * MAX_GAMES)[:MAX_GAMES]
 
 
+def process_line_raw(line: str, line_index: int, depth: int, deadline: float) -> str:
+    stripped = line.strip()
+    tokens = stripped.split() if stripped else []
+    if tokens and tokens[-1] in TERMINAL_TOKENS:
+        return line
+    return " ".join(update_tokens(tokens, line_index, depth, deadline))
+
+
 def run_results_csv(path: Path, depth: int = MAX_DEPTH) -> None:
     deadline = perf_counter() + TIME_BUDGET_SECONDS
-    output = []
-    for i, line in enumerate(read_results(path)):
-        tokens = line.strip().split() if line.strip() else []
-        output.append(" ".join(update_tokens(tokens, i, depth, deadline)))
+    output = [process_line_raw(line, i, depth, deadline) for i, line in enumerate(read_results(path))]
     path.write_text("\n".join(output) + "\n", encoding="utf-8")
 
 

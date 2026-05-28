@@ -1,10 +1,10 @@
-acao,jogador,tipo,origem,destino,notacao,capturas_A,capturas_V Inválido
-1,A,king,"(4, 1)","(5, 0)",b4->a3[king],0,0 Inválido
-2,V,king,"(3, 0)","(2, 1)",a5->b6[king],0,0 Inválido
-3,A,king,"(5, 0)","(4, 1)",a3->b4[king],0,0 Inválido
-4,V,king,"(2, 1)","(1, 2)",b6->c7[king],0,0 Inválido
-5,A,king,"(4, 1)","(3, 0)",b4->a5[king],0,0 Inválido
-6,V,capture,"(1, 2)","(0, 3)",c7->d8[capture],0,1 Inválido
-7,A,king,"(3, 0)","(2, 1)",a5->b6[king],0,1 Inválido
-8,V,capture,"(0, 3)","(2, 5)",d8->f6[capture],0,2 Inválido
-9,A,king,"(2, 1)","(1, 2)",b6->c7[king],0,2 Inválido
+
+e6
+
+e6
+
+e6
+
+e6
+
+e6
