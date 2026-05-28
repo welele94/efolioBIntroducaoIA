@@ -260,10 +260,16 @@ def exit_moves(s: GameState, pos: Coord, opp: Coord) -> list[Move]:
 def piece_captures(s: GameState, pos: Coord, piece: str, opp: Coord) -> list[Move]:
     if piece == "C":
         return knight_captures(s, pos, opp)
+
     moves = []
     for dr, dc in SLIDING_DIRECTIONS[piece]:
         nr, nc = pos[0] + dr, pos[1] + dc
         while in_bounds(nr, nc):
+            # A casa do agente adversário bloqueia a linha de visão da peça.
+            # Não se pode capturar um peão "atravessando" o outro agente.
+            if (nr, nc) == opp:
+                break
+
             cell = s.board[nr][nc]
             if cell == " ":
                 nr += dr
