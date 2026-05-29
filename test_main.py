@@ -32,7 +32,7 @@ PIECE_VALUE_WEIGHT=2
 MAX_TRANSPOSITION_ENTRIES=200_000
 THREAT_TOP_N=3
 THREAT_MARGIN=250
-QUIESCENCE_DEPTH=1
+QUIESCENCE_DEPTH=2
 OPENING_BOOK={():"e6",("e6",):"d3",("e6","d3"):"f7",("e6","d3","f7"):"c2"}
 Coord=Tuple[int,int]
 
@@ -293,6 +293,16 @@ def quiescence(s:GameState,alpha:float,beta:float,deadline:float,q_depth:int=QUI
         if alpha>=beta: break
     return value
 
+def should_use_quiescence(s:GameState)->bool:
+    majority=s.initial_black_pawns//2+1
+    if majority-s.a_captures<=2 or majority-s.v_captures<=2:
+        return True
+    for player in ("A","V"):
+        pos,inside,piece,opp=player_active_data(s,player)
+        if inside and piece and len(piece_captures(s,pos,piece,opp))>=2:
+            return True
+    return False
+
 def minimax_decision(s:GameState,depth:int,time_limit:float)->Optional[Move]:
     deadline=perf_counter()+time_limit*0.80
     legal=order_moves(s,generate_legal_moves(s))
@@ -323,7 +333,7 @@ def minimax(s:GameState,depth:int,alpha:float,beta:float,deadline:float,table:di
         if len(table)<MAX_TRANSPOSITION_ENTRIES: table[key]=(depth,score)
         return score
     if depth==0:
-        score=quiescence(s,alpha,beta,deadline,QUIESCENCE_DEPTH)
+        score=quiescence(s,alpha,beta,deadline,QUIESCENCE_DEPTH) if should_use_quiescence(s) else evaluate(s)
         if len(table)<MAX_TRANSPOSITION_ENTRIES: table[key]=(depth,score)
         return score
     explored_all=True
