@@ -33,7 +33,6 @@ MOBILITY_WEIGHT = 4
 DISTANCE_WEIGHT = 2
 BLOCKED_WEIGHT = 150
 MAJORITY_PRESSURE_WEIGHT = 90
-VISION_WEIGHT = 15
 PIECE_PRIORITY = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
 PIECE_VALUE = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
 PIECE_VALUE_WEIGHT = 2
@@ -121,6 +120,9 @@ class GameState:
         elif move.move_type == "exit":
             fr, fc = pos
             destination_cell = s.board[tr][tc]
+
+            # Ao sair de uma peça, o agente pode mover-se para uma casa vazia
+            # ou entrar imediatamente noutra peça ativa adjacente.
             s.board[fr][fc] = "P"
 
             if destination_cell in ACTIVE_PIECES:
@@ -247,6 +249,9 @@ def exit_moves(s: GameState, pos: Coord, opp: Coord) -> list[Move]:
         nr, nc = pos[0] + dr, pos[1] + dc
         if not in_bounds(nr, nc) or adjacent_or_same((nr, nc), opp):
             continue
+
+        # Movimento de rei ao sair da peça: casa vazia ou troca direta
+        # para outra peça ativa adjacente.
         if s.board[nr][nc] == " " or s.board[nr][nc] in ACTIVE_PIECES:
             moves.append(Move(pos, (nr, nc), "exit", coord_to_notation((nr, nc))))
     return moves
@@ -255,12 +260,16 @@ def exit_moves(s: GameState, pos: Coord, opp: Coord) -> list[Move]:
 def piece_captures(s: GameState, pos: Coord, piece: str, opp: Coord) -> list[Move]:
     if piece == "C":
         return knight_captures(s, pos, opp)
+
     moves = []
     for dr, dc in SLIDING_DIRECTIONS[piece]:
         nr, nc = pos[0] + dr, pos[1] + dc
         while in_bounds(nr, nc):
+            # A casa do agente adversário bloqueia a linha de visão da peça.
+            # Não se pode capturar um peão "atravessando" o outro agente.
             if (nr, nc) == opp:
                 break
+
             cell = s.board[nr][nc]
             if cell == " ":
                 nr += dr
@@ -324,12 +333,6 @@ def majority_pressure_score(s: GameState) -> int:
     return score
 
 
-def active_capture_vision(s: GameState) -> int:
-    a_vision = len(piece_captures(s, s.a_pos, s.a_active_piece, s.v_pos)) if (s.a_inside_piece and s.a_active_piece) else 0
-    v_vision = len(piece_captures(s, s.v_pos, s.v_active_piece, s.a_pos)) if (s.v_inside_piece and s.v_active_piece) else 0
-    return (a_vision - v_vision) * VISION_WEIGHT
-
-
 def evaluate(s: GameState) -> float:
     if s.is_terminal():
         winner = s.get_winner()
@@ -343,7 +346,24 @@ def evaluate(s: GameState) -> float:
     score += target_distance_score(s) * DISTANCE_WEIGHT
     score += majority_pressure_score(s)
     score += (PIECE_VALUE[s.a_active_piece] - PIECE_VALUE[s.v_active_piece]) * PIECE_VALUE_WEIGHT
-    score += active_capture_vision(s)
+
+    if s.action_count >= 45:
+        capture_diff = s.a_captures - s.v_captures
+
+        a_vision = len(piece_captures(s, s.a_pos, s.a_active_piece, s.v_pos)) if (s.a_inside_piece and s.a_active_piece) else 0
+        v_vision = len(piece_captures(s, s.v_pos, s.v_active_piece, s.a_pos)) if (s.v_inside_piece and s.v_active_piece) else 0
+
+        # Se A está à frente, preferimos estados em que V não tem capturas imediatas.
+        if capture_diff > 0:
+            score -= v_vision * 40
+            if not s.v_inside_piece:
+                score += 80
+
+        # Se V está à frente, preferimos estados em que A não tem capturas imediatas.
+        if capture_diff < 0:
+            score += a_vision * 40
+            if not s.a_inside_piece:
+                score -= 80
 
     if a_mob <= 1:
         score -= BLOCKED_WEIGHT
