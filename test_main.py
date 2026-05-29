@@ -333,6 +333,10 @@ def majority_pressure_score(s: GameState) -> int:
     return score
 
 
+def center_distance(pos: Coord) -> int:
+    return min(abs(pos[0] - 3), abs(pos[0] - 4)) + min(abs(pos[1] - 3), abs(pos[1] - 4))
+
+
 def evaluate(s: GameState) -> float:
     if s.is_terminal():
         winner = s.get_winner()
@@ -347,23 +351,9 @@ def evaluate(s: GameState) -> float:
     score += majority_pressure_score(s)
     score += (PIECE_VALUE[s.a_active_piece] - PIECE_VALUE[s.v_active_piece]) * PIECE_VALUE_WEIGHT
 
-    if s.action_count >= 45:
-        capture_diff = s.a_captures - s.v_captures
-
-        a_vision = len(piece_captures(s, s.a_pos, s.a_active_piece, s.v_pos)) if (s.a_inside_piece and s.a_active_piece) else 0
-        v_vision = len(piece_captures(s, s.v_pos, s.v_active_piece, s.a_pos)) if (s.v_inside_piece and s.v_active_piece) else 0
-
-        # Se A está à frente, preferimos estados em que V não tem capturas imediatas.
-        if capture_diff > 0:
-            score -= v_vision * 40
-            if not s.v_inside_piece:
-                score += 80
-
-        # Se V está à frente, preferimos estados em que A não tem capturas imediatas.
-        if capture_diff < 0:
-            score += a_vision * 40
-            if not s.a_inside_piece:
-                score -= 80
+    # Micro desempate posicional: entre jogadas quase equivalentes,
+    # prefere manter o nosso rei mais perto do centro do tabuleiro.
+    score += center_distance(s.v_pos) - center_distance(s.a_pos)
 
     if a_mob <= 1:
         score -= BLOCKED_WEIGHT
