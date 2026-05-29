@@ -120,9 +120,6 @@ class GameState:
         elif move.move_type == "exit":
             fr, fc = pos
             destination_cell = s.board[tr][tc]
-
-            # Ao sair de uma peça, o agente pode mover-se para uma casa vazia
-            # ou entrar imediatamente noutra peça ativa adjacente.
             s.board[fr][fc] = "P"
 
             if destination_cell in ACTIVE_PIECES:
@@ -249,9 +246,6 @@ def exit_moves(s: GameState, pos: Coord, opp: Coord) -> list[Move]:
         nr, nc = pos[0] + dr, pos[1] + dc
         if not in_bounds(nr, nc) or adjacent_or_same((nr, nc), opp):
             continue
-
-        # Movimento de rei ao sair da peça: casa vazia ou troca direta
-        # para outra peça ativa adjacente.
         if s.board[nr][nc] == " " or s.board[nr][nc] in ACTIVE_PIECES:
             moves.append(Move(pos, (nr, nc), "exit", coord_to_notation((nr, nc))))
     return moves
@@ -265,8 +259,6 @@ def piece_captures(s: GameState, pos: Coord, piece: str, opp: Coord) -> list[Mov
     for dr, dc in SLIDING_DIRECTIONS[piece]:
         nr, nc = pos[0] + dr, pos[1] + dc
         while in_bounds(nr, nc):
-            # A casa do agente adversário bloqueia a linha de visão da peça.
-            # Não se pode capturar um peão "atravessando" o outro agente.
             if (nr, nc) == opp:
                 break
 
@@ -333,10 +325,6 @@ def majority_pressure_score(s: GameState) -> int:
     return score
 
 
-def center_distance(pos: Coord) -> int:
-    return min(abs(pos[0] - 3), abs(pos[0] - 4)) + min(abs(pos[1] - 3), abs(pos[1] - 4))
-
-
 def evaluate(s: GameState) -> float:
     if s.is_terminal():
         winner = s.get_winner()
@@ -350,11 +338,6 @@ def evaluate(s: GameState) -> float:
     score += target_distance_score(s) * DISTANCE_WEIGHT
     score += majority_pressure_score(s)
     score += (PIECE_VALUE[s.a_active_piece] - PIECE_VALUE[s.v_active_piece]) * PIECE_VALUE_WEIGHT
-
-    # Micro desempate posicional: entre jogadas quase equivalentes,
-    # prefere manter o nosso rei mais perto do centro do tabuleiro.
-    score += center_distance(s.v_pos) - center_distance(s.a_pos)
-
     if a_mob <= 1:
         score -= BLOCKED_WEIGHT
     if v_mob <= 1:
@@ -396,6 +379,24 @@ def state_key(s: GameState):
     )
 
 
+def root_tie_breaker(state: GameState, move: Move) -> int:
+    player = state.current_player
+
+    if move.move_type == "capture":
+        simulated = state.apply_move(move)
+        if player == "A":
+            return len(piece_captures(simulated, simulated.a_pos, simulated.a_active_piece, simulated.v_pos)) if simulated.a_inside_piece and simulated.a_active_piece else 0
+        return len(piece_captures(simulated, simulated.v_pos, simulated.v_active_piece, simulated.a_pos)) if simulated.v_inside_piece and simulated.v_active_piece else 0
+
+    tr, tc = move.to_pos
+    cell = state.board[tr][tc]
+    if cell in ACTIVE_PIECES:
+        return 50 + PIECE_PRIORITY[cell]
+
+    center_dist = min(abs(tr - 3), abs(tr - 4)) + min(abs(tc - 3), abs(tc - 4))
+    return -center_dist
+
+
 def minimax_decision(s: GameState, depth: int, time_limit: float) -> Optional[Move]:
     deadline = perf_counter() + (time_limit * 0.80)
     legal_moves = order_moves(s, generate_legal_moves(s))
@@ -418,6 +419,9 @@ def minimax_decision(s: GameState, depth: int, time_limit: float) -> Optional[Mo
                     best_score, best_move = score, move
                 elif not maximizing and score < best_score:
                     best_score, best_move = score, move
+                elif score == best_score:
+                    if best_move is None or root_tie_breaker(s, move) > root_tie_breaker(s, best_move):
+                        best_move = move
             if best_move is not None:
                 best_completed_move = best_move
         except SearchTimeout:
