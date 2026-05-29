@@ -32,6 +32,7 @@ PIECE_VALUE_WEIGHT=2
 MAX_TRANSPOSITION_ENTRIES=200_000
 THREAT_TOP_N=3
 THREAT_MARGIN=250
+QUIESCENCE_DEPTH=2
 OPENING_BOOK={():"e6",("e6",):"d3",("e6","d3"):"f7",("e6","d3","f7"):"c2"}
 Coord=Tuple[int,int]
 
@@ -271,6 +272,27 @@ def filter_high_threat_moves(s:GameState,moves:list[Move])->list[Move]:
     safe=[m for d,m in pairs if d<=md+THREAT_MARGIN]
     return safe if safe else moves
 
+def tactical_captures_only(s:GameState)->list[Move]:
+    return [m for m in generate_legal_moves(s) if m.move_type=="capture"]
+
+def quiescence(s:GameState,alpha:float,beta:float,deadline:float,q_depth:int=QUIESCENCE_DEPTH)->float:
+    if perf_counter()>=deadline: raise SearchTimeout
+    stand=evaluate(s)
+    if q_depth<=0 or s.is_terminal(): return stand
+    captures=order_moves(s,tactical_captures_only(s))
+    if not captures: return stand
+    if s.current_player=="A":
+        value=stand
+        for move in captures:
+            value=max(value,quiescence(s.apply_move(move),alpha,beta,deadline,q_depth-1)); alpha=max(alpha,value)
+            if alpha>=beta: break
+        return value
+    value=stand
+    for move in captures:
+        value=min(value,quiescence(s.apply_move(move),alpha,beta,deadline,q_depth-1)); beta=min(beta,value)
+        if alpha>=beta: break
+    return value
+
 def minimax_decision(s:GameState,depth:int,time_limit:float)->Optional[Move]:
     deadline=perf_counter()+time_limit*0.80
     legal=order_moves(s,generate_legal_moves(s))
@@ -296,8 +318,12 @@ def minimax(s:GameState,depth:int,alpha:float,beta:float,deadline:float,table:di
     if perf_counter()>=deadline: raise SearchTimeout
     key=state_key(s); cached=table.get(key)
     if cached is not None and cached[0]>=depth: return cached[1]
-    if depth==0 or s.is_terminal():
+    if s.is_terminal():
         score=evaluate(s)
+        if len(table)<MAX_TRANSPOSITION_ENTRIES: table[key]=(depth,score)
+        return score
+    if depth==0:
+        score=quiescence(s,alpha,beta,deadline,QUIESCENCE_DEPTH)
         if len(table)<MAX_TRANSPOSITION_ENTRIES: table[key]=(depth,score)
         return score
     explored_all=True
