@@ -33,7 +33,6 @@ MOBILITY_WEIGHT = 4
 DISTANCE_WEIGHT = 2
 BLOCKED_WEIGHT = 150
 MAJORITY_PRESSURE_WEIGHT = 90
-EXIT_WITH_CAPTURE_PENALTY = 180
 PIECE_PRIORITY = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
 PIECE_VALUE = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
 PIECE_VALUE_WEIGHT = 2
@@ -121,6 +120,9 @@ class GameState:
         elif move.move_type == "exit":
             fr, fc = pos
             destination_cell = s.board[tr][tc]
+
+            # Ao sair de uma peça, o agente pode mover-se para uma casa vazia
+            # ou entrar imediatamente noutra peça ativa adjacente.
             s.board[fr][fc] = "P"
 
             if destination_cell in ACTIVE_PIECES:
@@ -247,6 +249,9 @@ def exit_moves(s: GameState, pos: Coord, opp: Coord) -> list[Move]:
         nr, nc = pos[0] + dr, pos[1] + dc
         if not in_bounds(nr, nc) or adjacent_or_same((nr, nc), opp):
             continue
+
+        # Movimento de rei ao sair da peça: casa vazia ou troca direta
+        # para outra peça ativa adjacente.
         if s.board[nr][nc] == " " or s.board[nr][nc] in ACTIVE_PIECES:
             moves.append(Move(pos, (nr, nc), "exit", coord_to_notation((nr, nc))))
     return moves
@@ -260,6 +265,8 @@ def piece_captures(s: GameState, pos: Coord, piece: str, opp: Coord) -> list[Mov
     for dr, dc in SLIDING_DIRECTIONS[piece]:
         nr, nc = pos[0] + dr, pos[1] + dc
         while in_bounds(nr, nc):
+            # A casa do agente adversário bloqueia a linha de visão da peça.
+            # Não se pode capturar um peão "atravessando" o outro agente.
             if (nr, nc) == opp:
                 break
 
@@ -380,26 +387,31 @@ def state_key(s: GameState):
     )
 
 
-def exits_piece_with_available_capture(state: GameState, move: Move) -> bool:
-    if move.move_type != "exit":
-        return False
-
-    pos, inside, piece, opp = agent_data(state, state.current_player)
-    if not inside or piece is None:
-        return False
-
-    return len(piece_captures(state, pos, piece, opp)) > 0
+def winning_move_now(s: GameState, moves: list[Move]) -> Optional[Move]:
+    player = s.current_player
+    for move in moves:
+        next_state = s.apply_move(move)
+        if next_state.is_terminal() and next_state.get_winner() == player:
+            return move
+    return None
 
 
-def adjust_root_score_for_move(state: GameState, move: Move, score: float) -> float:
-    # Penaliza abandonar uma peça ativa quando essa mesma peça ainda tem capturas legais.
-    # Isto atua só na jogada que vamos escolher agora, para evitar blunders tipo sair da Dama cedo.
-    if not exits_piece_with_available_capture(state, move):
-        return score
+def opponent_can_win_next(s: GameState) -> bool:
+    opponent = s.current_player
+    for reply in generate_legal_moves(s):
+        next_state = s.apply_move(reply)
+        if next_state.is_terminal() and next_state.get_winner() == opponent:
+            return True
+    return False
 
-    if state.current_player == "A":
-        return score - EXIT_WITH_CAPTURE_PENALTY
-    return score + EXIT_WITH_CAPTURE_PENALTY
+
+def filter_suicidal_moves(s: GameState, moves: list[Move]) -> list[Move]:
+    safe = []
+    for move in moves:
+        next_state = s.apply_move(move)
+        if not opponent_can_win_next(next_state):
+            safe.append(move)
+    return safe if safe else moves
 
 
 def minimax_decision(s: GameState, depth: int, time_limit: float) -> Optional[Move]:
@@ -407,6 +419,12 @@ def minimax_decision(s: GameState, depth: int, time_limit: float) -> Optional[Mo
     legal_moves = order_moves(s, generate_legal_moves(s))
     if not legal_moves:
         return None
+
+    win_now = winning_move_now(s, legal_moves)
+    if win_now is not None:
+        return win_now
+
+    legal_moves = order_moves(s, filter_suicidal_moves(s, legal_moves))
 
     best_completed_move = legal_moves[0]
     maximizing = s.current_player == "A"
@@ -419,8 +437,7 @@ def minimax_decision(s: GameState, depth: int, time_limit: float) -> Optional[Mo
             best_score = -inf if maximizing else inf
             best_move = None
             for move in legal_moves:
-                raw_score = minimax(s.apply_move(move), current_depth - 1, -inf, inf, deadline, table)
-                score = adjust_root_score_for_move(s, move, raw_score)
+                score = minimax(s.apply_move(move), current_depth - 1, -inf, inf, deadline, table)
                 if maximizing and score > best_score:
                     best_score, best_move = score, move
                 elif not maximizing and score < best_score:
