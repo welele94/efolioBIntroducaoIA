@@ -33,6 +33,7 @@ MOBILITY_WEIGHT = 4
 DISTANCE_WEIGHT = 2
 BLOCKED_WEIGHT = 150
 MAJORITY_PRESSURE_WEIGHT = 90
+EXIT_WITH_CAPTURE_PENALTY = 180
 PIECE_PRIORITY = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
 PIECE_VALUE = {None: 0, "C": 25, "B": 40, "T": 40, "D": 70}
 PIECE_VALUE_WEIGHT = 2
@@ -379,22 +380,26 @@ def state_key(s: GameState):
     )
 
 
-def root_tie_breaker(state: GameState, move: Move) -> int:
-    player = state.current_player
+def exits_piece_with_available_capture(state: GameState, move: Move) -> bool:
+    if move.move_type != "exit":
+        return False
 
-    if move.move_type == "capture":
-        simulated = state.apply_move(move)
-        if player == "A":
-            return len(piece_captures(simulated, simulated.a_pos, simulated.a_active_piece, simulated.v_pos)) if simulated.a_inside_piece and simulated.a_active_piece else 0
-        return len(piece_captures(simulated, simulated.v_pos, simulated.v_active_piece, simulated.a_pos)) if simulated.v_inside_piece and simulated.v_active_piece else 0
+    pos, inside, piece, opp = agent_data(state, state.current_player)
+    if not inside or piece is None:
+        return False
 
-    tr, tc = move.to_pos
-    cell = state.board[tr][tc]
-    if cell in ACTIVE_PIECES:
-        return 50 + PIECE_PRIORITY[cell]
+    return len(piece_captures(state, pos, piece, opp)) > 0
 
-    center_dist = min(abs(tr - 3), abs(tr - 4)) + min(abs(tc - 3), abs(tc - 4))
-    return -center_dist
+
+def adjust_root_score_for_move(state: GameState, move: Move, score: float) -> float:
+    # Penaliza abandonar uma peça ativa quando essa mesma peça ainda tem capturas legais.
+    # Isto atua só na jogada que vamos escolher agora, para evitar blunders tipo sair da Dama cedo.
+    if not exits_piece_with_available_capture(state, move):
+        return score
+
+    if state.current_player == "A":
+        return score - EXIT_WITH_CAPTURE_PENALTY
+    return score + EXIT_WITH_CAPTURE_PENALTY
 
 
 def minimax_decision(s: GameState, depth: int, time_limit: float) -> Optional[Move]:
@@ -414,14 +419,12 @@ def minimax_decision(s: GameState, depth: int, time_limit: float) -> Optional[Mo
             best_score = -inf if maximizing else inf
             best_move = None
             for move in legal_moves:
-                score = minimax(s.apply_move(move), current_depth - 1, -inf, inf, deadline, table)
+                raw_score = minimax(s.apply_move(move), current_depth - 1, -inf, inf, deadline, table)
+                score = adjust_root_score_for_move(s, move, raw_score)
                 if maximizing and score > best_score:
                     best_score, best_move = score, move
                 elif not maximizing and score < best_score:
                     best_score, best_move = score, move
-                elif score == best_score:
-                    if best_move is None or root_tie_breaker(s, move) > root_tie_breaker(s, best_move):
-                        best_move = move
             if best_move is not None:
                 best_completed_move = best_move
         except SearchTimeout:
