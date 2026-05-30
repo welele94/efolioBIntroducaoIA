@@ -32,7 +32,9 @@ PIECE_VALUE_WEIGHT=2
 MAX_TRANSPOSITION_ENTRIES=200_000
 THREAT_TOP_N=3
 THREAT_MARGIN=250
-QUIESCENCE_DEPTH=2
+HORIZON_ENTRY_VISION_MIN=2
+HORIZON_ENTRY_DANGER=900
+HORIZON_ENTRY_DANGER_PER_CAPTURE=180
 OPENING_BOOK={():"e6",("e6",):"d3",("e6","d3"):"f7",("e6","d3","f7"):"c2"}
 Coord=Tuple[int,int]
 
@@ -261,9 +263,30 @@ def reply_danger(after_our_move:GameState,reply:Move)->int:
         elif piece in {"T","B"}: danger+=70
     return danger
 
+def horizon_entry_threat(after_our_move:GameState)->int:
+    opponent=after_our_move.current_player
+    pos,inside,_,opp_pos=player_active_data(after_our_move,opponent)
+    if inside:
+        return 0
+    danger=0
+    for move in king_moves(after_our_move,pos,opp_pos):
+        r,c=move.to_pos
+        piece=after_our_move.board[r][c]
+        if piece not in {"D","T","B"}:
+            continue
+        vision=len(piece_captures(after_our_move,move.to_pos,piece,opp_pos))
+        if vision>=HORIZON_ENTRY_VISION_MIN:
+            piece_bonus=500 if piece=="D" else 250
+            danger=max(danger,HORIZON_ENTRY_DANGER+piece_bonus+vision*HORIZON_ENTRY_DANGER_PER_CAPTURE)
+    return danger
+
 def candidate_move_danger(s:GameState,move:Move,top_n:int=THREAT_TOP_N)->int:
-    after=s.apply_move(move); replies=order_moves(after,generate_legal_moves(after))[:top_n]
-    return max((reply_danger(after,r) for r in replies),default=0)
+    after=s.apply_move(move)
+    replies=order_moves(after,generate_legal_moves(after))[:top_n]
+    reply_threat=max((reply_danger(after,r) for r in replies),default=0)
+    # Verdadeiro guardrail contra efeito horizonte:
+    # penaliza jogadas que deixam o adversário a 1 passo de entrar numa D/T/B produtiva.
+    return max(reply_threat,horizon_entry_threat(after))
 
 def filter_high_threat_moves(s:GameState,moves:list[Move])->list[Move]:
     if len(moves)<=1: return moves
@@ -271,37 +294,6 @@ def filter_high_threat_moves(s:GameState,moves:list[Move])->list[Move]:
     md=min(d for d,_ in pairs)
     safe=[m for d,m in pairs if d<=md+THREAT_MARGIN]
     return safe if safe else moves
-
-def tactical_captures_only(s:GameState)->list[Move]:
-    return [m for m in generate_legal_moves(s) if m.move_type=="capture"]
-
-def quiescence(s:GameState,alpha:float,beta:float,deadline:float,q_depth:int=QUIESCENCE_DEPTH)->float:
-    if perf_counter()>=deadline: raise SearchTimeout
-    stand=evaluate(s)
-    if q_depth<=0 or s.is_terminal(): return stand
-    captures=order_moves(s,tactical_captures_only(s))
-    if not captures: return stand
-    if s.current_player=="A":
-        value=stand
-        for move in captures:
-            value=max(value,quiescence(s.apply_move(move),alpha,beta,deadline,q_depth-1)); alpha=max(alpha,value)
-            if alpha>=beta: break
-        return value
-    value=stand
-    for move in captures:
-        value=min(value,quiescence(s.apply_move(move),alpha,beta,deadline,q_depth-1)); beta=min(beta,value)
-        if alpha>=beta: break
-    return value
-
-def should_use_quiescence(s:GameState)->bool:
-    majority=s.initial_black_pawns//2+1
-    if majority-s.a_captures<=2 or majority-s.v_captures<=2:
-        return True
-    for player in ("A","V"):
-        pos,inside,piece,opp=player_active_data(s,player)
-        if inside and piece and len(piece_captures(s,pos,piece,opp))>=2:
-            return True
-    return False
 
 def minimax_decision(s:GameState,depth:int,time_limit:float)->Optional[Move]:
     deadline=perf_counter()+time_limit*0.80
@@ -328,12 +320,8 @@ def minimax(s:GameState,depth:int,alpha:float,beta:float,deadline:float,table:di
     if perf_counter()>=deadline: raise SearchTimeout
     key=state_key(s); cached=table.get(key)
     if cached is not None and cached[0]>=depth: return cached[1]
-    if s.is_terminal():
+    if depth==0 or s.is_terminal():
         score=evaluate(s)
-        if len(table)<MAX_TRANSPOSITION_ENTRIES: table[key]=(depth,score)
-        return score
-    if depth==0:
-        score=quiescence(s,alpha,beta,deadline,QUIESCENCE_DEPTH) if should_use_quiescence(s) else evaluate(s)
         if len(table)<MAX_TRANSPOSITION_ENTRIES: table[key]=(depth,score)
         return score
     explored_all=True
