@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+# E-fólio B - Introdução à Inteligência Artificial
+# Agente adversarial baseado em Minimax com Alpha-Beta e heurística própria.
+# O programa lê e atualiza o ficheiro resultados.csv, uma jogada por execução.
+
 from dataclasses import dataclass
 from math import inf
 from pathlib import Path
 from time import perf_counter
 from typing import Optional, Tuple
 
+# Configuração geral do tabuleiro e dos limites de procura/execução.
 BOARD_SIZE=8
 BOARD_CELLS=64
 INITIAL_BOARD_STRING="Pp p pD ppBp p   pp pp  pCpVpp PP ppApCp  pp pp   p pBpp Dp p pP"
@@ -20,6 +25,9 @@ ACTIVE_PIECES={"T","B","C","D"}
 SLIDING_DIRECTIONS={"T":[(-1,0),(1,0),(0,-1),(0,1)],"B":[(-1,-1),(-1,1),(1,-1),(1,1)],"D":[(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(-1,1),(1,-1),(1,1)]}
 KNIGHT_DELTAS=[(-2,-1),(-2,1),(-1,-2),(-1,2),(1,-2),(1,2),(2,-1),(2,1)]
 KING_DELTAS=[(-1,-1),(-1,0),(-1,1),(0,-1),(0,1),(1,-1),(1,0),(1,1)]
+
+# Pesos usados na função heurística. Foram afinados para equilibrar capturas,
+# mobilidade, distância ao objetivo e pressão perto da condição de vitória.
 WIN_BONUS=10000
 CAPTURE_WEIGHT=120
 MOBILITY_WEIGHT=4
@@ -29,12 +37,17 @@ MAJORITY_PRESSURE_WEIGHT=90
 PIECE_PRIORITY={None:0,"C":25,"B":40,"T":40,"D":70}
 PIECE_VALUE={None:0,"C":25,"B":40,"T":40,"D":70}
 PIECE_VALUE_WEIGHT=2
+
+# Limite da tabela de transposição para evitar consumo excessivo de memória.
 MAX_TRANSPOSITION_ENTRIES=200_000
 THREAT_TOP_N=3
 THREAT_MARGIN=250
+
+# Pequena abertura fixa para estabilizar os primeiros lances da posição inicial.
 OPENING_BOOK={():"e6",("e6",):"d3",("e6","d3"):"f7",("e6","d3","f7"):"c2"}
 Coord=Tuple[int,int]
 
+# Representa uma jogada possível, guardando origem, destino, tipo e notação.
 @dataclass
 class Move:
     from_pos:Coord
@@ -42,6 +55,8 @@ class Move:
     move_type:str
     notation:str
 
+
+# Guarda toda a informação necessária para reconstruir e avaliar uma posição.
 @dataclass
 class GameState:
     board:list[list[str]]
@@ -58,15 +73,18 @@ class GameState:
     initial_black_pawns:int=0
 
     def clone(self)->"GameState":
+        # Cópia profunda do estado para simular jogadas sem alterar o estado original.
         return GameState([row[:] for row in self.board],self.current_player,self.a_pos,self.v_pos,self.a_inside_piece,self.v_inside_piece,self.a_active_piece,self.v_active_piece,self.a_captures,self.v_captures,self.action_count,self.initial_black_pawns)
 
     def apply_move(self,move:Move)->"GameState":
+        # Aplica uma jogada e devolve o novo estado resultante.
         s=self.clone(); player=s.current_player; pos=s.a_pos if player=="A" else s.v_pos
         if move.move_type=="pass":
             s.action_count+=1; s.current_player=other_player(player); return s
         tr,tc=move.to_pos
         if move.move_type=="king":
             cell=s.board[tr][tc]
+            # Se o rei entra numa peça ativa, passa a usar essa peça.
             if cell in ACTIVE_PIECES:
                 s.board[tr][tc]=" "
                 if player=="A": s.a_inside_piece=True; s.a_active_piece=cell
@@ -74,10 +92,12 @@ class GameState:
             if player=="A": s.a_pos=move.to_pos
             else: s.v_pos=move.to_pos
         elif move.move_type=="capture":
+            # Capturar remove o peão preto e aumenta a contagem do jogador.
             s.board[tr][tc]=" "
             if player=="A": s.a_pos=move.to_pos; s.a_captures+=1
             else: s.v_pos=move.to_pos; s.v_captures+=1
         elif move.move_type=="exit":
+            # Ao sair de uma peça, essa peça fica marcada como peão branco e deixa de ser reutilizável.
             fr,fc=pos; dest=s.board[tr][tc]; s.board[fr][fc]="P"
             if dest in ACTIVE_PIECES:
                 s.board[tr][tc]=" "
@@ -89,6 +109,7 @@ class GameState:
         s.action_count+=1; s.current_player=other_player(player); return s
 
     def is_terminal(self)->bool:
+        # Condições de fim de jogo definidas no enunciado.
         if sum(cell=="p" for row in self.board for cell in row)==0: return True
         if self.action_count>=MAX_ACTIONS: return True
         majority=self.initial_black_pawns//2+1
@@ -108,6 +129,7 @@ def parse_board(board_string:str)->list[list[str]]:
     return [list(board_string[(7-row)*8:(8-row)*8]) for row in range(8)]
 
 def create_initial_state()->GameState:
+    # Cria o estado inicial a partir da string fixa do enunciado.
     board=parse_board(INITIAL_BOARD_STRING); a_pos=v_pos=(-1,-1); pawns=0
     for r in range(8):
         for c in range(8):
@@ -128,11 +150,13 @@ def agent_data(s:GameState,player:str):
     return (s.a_pos,s.a_inside_piece,s.a_active_piece,s.v_pos) if player=="A" else (s.v_pos,s.v_inside_piece,s.v_active_piece,s.a_pos)
 
 def generate_legal_moves(s:GameState)->list[Move]:
+    # Gera os movimentos legais consoante o agente esteja como rei ou dentro de uma peça.
     pos,inside,piece,opp=agent_data(s,s.current_player); moves=[]
     if inside and piece:
         moves.extend(piece_captures(s,pos,piece,opp)); moves.extend(exit_moves(s,pos,opp))
     else:
         moves.extend(king_moves(s,pos,opp))
+    # O passe só é permitido quando não existe qualquer outro movimento legal.
     return moves if moves else [Move(pos,pos,"pass",coord_to_notation(pos))]
 
 def king_moves(s:GameState,pos:Coord,opp:Coord)->list[Move]:
@@ -152,6 +176,7 @@ def exit_moves(s:GameState,pos:Coord,opp:Coord)->list[Move]:
     return moves
 
 def piece_captures(s:GameState,pos:Coord,piece:str,opp:Coord)->list[Move]:
+    # Capturas das peças deslizantes; só é permitido terminar em peão preto.
     if piece=="C": return knight_captures(s,pos,opp)
     moves=[]
     for dr,dc in SLIDING_DIRECTIONS[piece]:
@@ -181,6 +206,7 @@ def nearest_piece_distance(s:GameState,pos:Coord)->int:
     return min(d) if d else 0
 
 def target_distance_score(s:GameState)->int:
+    # Se está numa peça, interessa aproximar-se de peões; caso contrário, aproximar-se de peças.
     a=nearest_pawn_distance(s,s.a_pos) if s.a_inside_piece else nearest_piece_distance(s,s.a_pos)
     v=nearest_pawn_distance(s,s.v_pos) if s.v_inside_piece else nearest_piece_distance(s,s.v_pos)
     return v-a
@@ -189,12 +215,14 @@ def mobility_counts(s:GameState)->tuple[int,int]:
     original=s.current_player; s.current_player="A"; a=len(generate_legal_moves(s)); s.current_player="V"; v=len(generate_legal_moves(s)); s.current_player=original; return a,v
 
 def majority_pressure_score(s:GameState)->int:
+    # Bónus/penalização quando alguém está perto de atingir a maioria de capturas.
     majority=s.initial_black_pawns//2+1; ar=majority-s.a_captures; vr=majority-s.v_captures; score=0
     if 0<ar<=3: score+=(4-ar)*MAJORITY_PRESSURE_WEIGHT
     if 0<vr<=3: score-=(4-vr)*MAJORITY_PRESSURE_WEIGHT
     return score
 
 def evaluate(s:GameState)->float:
+    # Função heurística usada nas folhas da procura limitada.
     if s.is_terminal():
         winner=s.get_winner()
         if winner=="draw": return 0
@@ -210,6 +238,7 @@ def evaluate(s:GameState)->float:
     return score
 
 def move_priority(state:GameState,move:Move)->int:
+    # Valor mais baixo significa maior prioridade na ordenação.
     if move.move_type=="capture": return 0
     tr,tc=move.to_pos; cell=state.board[tr][tc]
     if move.move_type=="king" and cell in ACTIVE_PIECES: return 100-PIECE_PRIORITY[cell]
@@ -220,9 +249,11 @@ def move_priority(state:GameState,move:Move)->int:
 def order_moves(state:GameState,moves:list[Move])->list[Move]: return sorted(moves,key=lambda m:(move_priority(state,m),m.notation))
 
 def state_key(s:GameState):
+    # Chave usada na tabela de transposição. Inclui todos os elementos relevantes do estado.
     return (tuple(tuple(row) for row in s.board),s.current_player,s.a_pos,s.v_pos,s.a_inside_piece,s.v_inside_piece,s.a_active_piece,s.v_active_piece,s.a_captures,s.v_captures,s.action_count)
 
 def winning_move_now(s:GameState,moves:list[Move])->Optional[Move]:
+    # Antes de pesquisar, verifica se já existe uma jogada que ganha imediatamente.
     player=s.current_player
     for move in moves:
         ns=s.apply_move(move)
@@ -237,6 +268,7 @@ def opponent_can_win_next(s:GameState)->bool:
     return False
 
 def filter_suicidal_moves(s:GameState,moves:list[Move])->list[Move]:
+    # Evita, sempre que possível, jogadas que entregam vitória imediata ao adversário.
     safe=[m for m in moves if not opponent_can_win_next(s.apply_move(m))]
     return safe if safe else moves
 
@@ -246,6 +278,7 @@ def player_active_data(s:GameState,player:str):
     return (s.a_pos,s.a_inside_piece,s.a_active_piece,s.v_pos) if player=="A" else (s.v_pos,s.v_inside_piece,s.v_active_piece,s.a_pos)
 
 def reply_danger(after_our_move:GameState,reply:Move)->int:
+    # Estima quão perigosa é uma resposta do adversário após uma jogada candidata.
     opponent=after_our_move.current_player; ns=after_our_move.apply_move(reply)
     if ns.is_terminal() and ns.get_winner()==opponent: return 10000
     danger=300 if reply.move_type=="capture" else 0
@@ -261,10 +294,12 @@ def reply_danger(after_our_move:GameState,reply:Move)->int:
     return danger
 
 def candidate_move_danger(s:GameState,move:Move,top_n:int=THREAT_TOP_N)->int:
+    # Analisa apenas algumas respostas mais promissoras para evitar custo excessivo.
     after=s.apply_move(move); replies=order_moves(after,generate_legal_moves(after))[:top_n]
     return max((reply_danger(after,r) for r in replies),default=0)
 
 def filter_high_threat_moves(s:GameState,moves:list[Move])->list[Move]:
+    # Remove candidatos com risco muito acima do melhor candidato encontrado.
     if len(moves)<=1: return moves
     pairs=[(candidate_move_danger(s,m),m) for m in moves]
     md=min(d for d,_ in pairs)
@@ -272,6 +307,7 @@ def filter_high_threat_moves(s:GameState,moves:list[Move])->list[Move]:
     return safe if safe else moves
 
 def minimax_decision(s:GameState,depth:int,time_limit:float)->Optional[Move]:
+    # Escolhe a jogada através de iterative deepening sobre minimax alpha-beta.
     deadline=perf_counter()+time_limit*0.80
     legal=order_moves(s,generate_legal_moves(s))
     if not legal: return None
@@ -288,11 +324,13 @@ def minimax_decision(s:GameState,depth:int,time_limit:float)->Optional[Move]:
                 score=minimax(s.apply_move(move),current_depth-1,-inf,inf,deadline,table)
                 if maximizing and score>best_score: best_score,best_move=score,move
                 elif not maximizing and score<best_score: best_score,best_move=score,move
+            # Só substitui a jogada quando uma profundidade foi concluída com sucesso.
             if best_move is not None: best_completed=best_move
         except SearchTimeout: break
     return best_completed
 
 def minimax(s:GameState,depth:int,alpha:float,beta:float,deadline:float,table:dict[tuple,tuple[int,float]])->float:
+    # Minimax recursivo com poda alpha-beta e tabela de transposição.
     if perf_counter()>=deadline: raise SearchTimeout
     key=state_key(s); cached=table.get(key)
     if cached is not None and cached[0]>=depth: return cached[1]
@@ -311,10 +349,12 @@ def minimax(s:GameState,depth:int,alpha:float,beta:float,deadline:float,table:di
         for move in order_moves(s,generate_legal_moves(s)):
             value=min(value,minimax(s.apply_move(move),depth-1,alpha,beta,deadline,table)); beta=min(beta,value)
             if alpha>=beta: explored_all=False; break
+    # Só guarda na tabela quando o valor foi calculado sem cortes parciais.
     if explored_all and len(table)<MAX_TRANSPOSITION_ENTRIES: table[key]=(depth,value)
     return value
 
 def rebuild_state(tokens:list[str])->Optional[GameState]:
+    # Reconstrói o estado aplicando a sequência de jogadas já existente em resultados.csv.
     s=create_initial_state()
     for token in tokens:
         if token in TERMINAL_TOKENS: break
@@ -345,6 +385,7 @@ def safe_fallback_move(s:GameState)->Optional[Move]:
     legal=order_moves(s,generate_legal_moves(s)); return legal[0] if legal else None
 
 def update_tokens(tokens:list[str],line_index:int,depth:int,deadline:float)->list[str]:
+    # Decide se esta linha pertence ao nosso agente e, nesse caso, acrescenta uma jogada.
     if tokens and tokens[-1] in TERMINAL_TOKENS: return tokens
     s=rebuild_state(tokens)
     if s is None: return tokens+["Inválido"]
@@ -369,6 +410,7 @@ def process_line_raw(line:str,line_index:int,depth:int,deadline:float)->str:
     return " ".join(update_tokens(tokens,line_index,depth,deadline))
 
 def run_results_csv(path:Path,depth:int=MAX_DEPTH)->None:
+    # Processa as 10 linhas do resultados.csv dentro do orçamento global de tempo.
     deadline=perf_counter()+TIME_BUDGET_SECONDS
     output=[process_line_raw(line,i,depth,deadline) for i,line in enumerate(read_results(path))]
     path.write_text("\n".join(output)+"\n",encoding="utf-8")
